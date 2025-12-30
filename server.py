@@ -28,6 +28,7 @@ VOICES_DIR = Path(__file__).parent / "voices"
 # Global model instance (loaded once at startup)
 model = None
 model_loaded = False
+builtin_voice_conds = None  # Store the default voice to restore later
 
 
 def get_device():
@@ -41,7 +42,7 @@ def get_device():
 
 def load_model():
     """Load the TTS model at startup."""
-    global model, model_loaded
+    global model, model_loaded, builtin_voice_conds
 
     device = get_device()
     logger.info(f"Loading ChatterboxTTS model on {device}...")
@@ -49,6 +50,13 @@ def load_model():
     try:
         model = ChatterboxTTS.from_pretrained(device=device)
         model_loaded = True
+
+        # Store the built-in voice conditions so we can restore them later
+        # This fixes the issue where custom voices "stick" after being used
+        if hasattr(model, 'conds') and model.conds is not None:
+            builtin_voice_conds = model.conds
+            logger.info("Saved built-in voice conditions for restoration")
+
         logger.info("Model loaded successfully!")
     except Exception as e:
         logger.error(f"Failed to load model: {e}")
@@ -195,8 +203,11 @@ def generate():
             except Exception as e:
                 logger.warning(f"VOICE: Failed to process uploaded audio: {e}, using default")
         else:
-            # No voice specified - use model's default
-            logger.info("VOICE: Using model's DEFAULT voice (no voice_preset or voice_audio)")
+            # No voice specified - restore the built-in voice
+            if builtin_voice_conds is not None:
+                model.conds = builtin_voice_conds
+                logger.info("VOICE: Restored built-in voice conditions")
+            logger.info("VOICE: Using model's DEFAULT voice")
 
         try:
             # Generate speech
