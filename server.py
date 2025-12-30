@@ -160,25 +160,26 @@ def generate():
         exaggeration = max(0.0, min(1.0, exaggeration))
         cfg_weight = max(0.0, min(1.0, cfg_weight))
 
-        logger.info(f"Generating speech: text='{text[:50]}...' exag={exaggeration} cfg={cfg_weight}")
+        # Log what we received
+        logger.info(f"Request: text='{text[:50]}...' exag={exaggeration} cfg={cfg_weight}")
+        logger.info(f"Request: voice_preset={repr(voice_preset)}, voice_audio={'yes' if voice_audio_b64 else 'no'}")
 
-        # Determine voice source (preset takes precedence)
+        # Determine voice source
         audio_prompt_path = None
         temp_files_to_cleanup = []
 
         if voice_preset:
-            # Use preset voice
+            # Preset voice selected
             preset_path = get_voice_path(voice_preset)
             if preset_path:
-                # Ensure mono audio
                 audio_prompt_path, is_temp = ensure_mono_audio(preset_path)
                 if is_temp:
                     temp_files_to_cleanup.append(audio_prompt_path)
-                logger.info(f"Using preset voice: {voice_preset}")
+                logger.info(f"VOICE: Using preset '{voice_preset}' from {preset_path}")
             else:
-                logger.warning(f"Preset voice '{voice_preset}' not found, using default")
+                logger.warning(f"VOICE: Preset '{voice_preset}' not found, falling back to default")
         elif voice_audio_b64:
-            # Use uploaded audio
+            # Custom uploaded audio
             try:
                 audio_bytes = base64.b64decode(voice_audio_b64)
                 upload_temp = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
@@ -186,14 +187,16 @@ def generate():
                 upload_temp.close()
                 temp_files_to_cleanup.append(upload_temp.name)
 
-                # Ensure mono audio
                 audio_prompt_path, is_temp = ensure_mono_audio(upload_temp.name)
                 if is_temp and audio_prompt_path != upload_temp.name:
                     temp_files_to_cleanup.append(audio_prompt_path)
 
-                logger.info("Using uploaded voice audio")
+                logger.info(f"VOICE: Using custom uploaded audio ({len(audio_bytes)} bytes)")
             except Exception as e:
-                logger.warning(f"Failed to process voice audio: {e}")
+                logger.warning(f"VOICE: Failed to process uploaded audio: {e}, using default")
+        else:
+            # No voice specified - use model's default
+            logger.info("VOICE: Using model's DEFAULT voice (no voice_preset or voice_audio)")
 
         try:
             # Generate speech
