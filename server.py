@@ -10,6 +10,7 @@ import io
 import base64
 import tempfile
 import logging
+from pathlib import Path
 from flask import Flask, request, jsonify
 import torch
 import torchaudio as ta
@@ -20,6 +21,9 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
+
+# Voice presets directory (relative to this script)
+VOICES_DIR = Path(__file__).parent / "voices"
 
 # Global model instance (loaded once at startup)
 model = None
@@ -51,6 +55,34 @@ def load_model():
         model_loaded = False
 
 
+def get_available_voices():
+    """Get list of available voice presets from voices/ directory."""
+    voices = []
+    if VOICES_DIR.exists():
+        for f in VOICES_DIR.iterdir():
+            if f.suffix.lower() in [".wav", ".mp3", ".flac", ".ogg"]:
+                voices.append({
+                    "id": f.stem,
+                    "name": f.stem.replace("_", " ").title(),
+                    "file": f.name
+                })
+    return sorted(voices, key=lambda v: v["name"])
+
+
+def get_voice_path(voice_id):
+    """Get the file path for a voice preset, or None if not found."""
+    if not voice_id or not VOICES_DIR.exists():
+        return None
+
+    # Check for common audio extensions
+    for ext in [".wav", ".mp3", ".flac", ".ogg"]:
+        path = VOICES_DIR / f"{voice_id}{ext}"
+        if path.exists():
+            return str(path)
+
+    return None
+
+
 @app.route("/health", methods=["GET"])
 def health():
     """Health check endpoint."""
@@ -58,6 +90,14 @@ def health():
         "status": "ok",
         "model_loaded": model_loaded,
         "device": get_device()
+    })
+
+
+@app.route("/voices", methods=["GET"])
+def voices():
+    """List available voice presets."""
+    return jsonify({
+        "voices": get_available_voices()
     })
 
 
@@ -70,7 +110,10 @@ def generate():
         - text: string (required) - Text to synthesize
         - exaggeration: float (0.0-1.0, default 0.5) - Speech expressiveness
         - cfg_weight: float (0.0-1.0, default 0.5) - CFG guidance weight
-        - voice_audio: string (optional) - Base64-encoded audio for voice cloning
+        - voice_preset: string (optional) - Name of preset voice (e.g., "djt")
+        - voice_audio: string (optional) - Base64-encoded audio for custom voice cloning
+
+    Note: voice_preset takes precedence over voice_audio if both provided.
 
     Returns:
         - audio: string - Base64-encoded WAV audio
@@ -89,6 +132,7 @@ def generate():
         text = data["text"]
         exaggeration = float(data.get("exaggeration", 0.5))
         cfg_weight = float(data.get("cfg_weight", 0.5))
+        voice_preset = data.get("voice_preset")
         voice_audio_b64 = data.get("voice_audio")
 
         # Clamp values to valid range
@@ -97,19 +141,27 @@ def generate():
 
         logger.info(f"Generating speech: text='{text[:50]}...' exag={exaggeration} cfg={cfg_weight}")
 
-        # Handle voice cloning if audio provided
+        # Determine voice source (preset takes precedence)
         audio_prompt_path = None
         temp_file = None
 
-        if voice_audio_b64:
+        if voice_preset:
+            # Use preset voice
+            preset_path = get_voice_path(voice_preset)
+            if preset_path:
+                audio_prompt_path = preset_path
+                logger.info(f"Using preset voice: {voice_preset}")
+            else:
+                logger.warning(f"Preset voice '{voice_preset}' not found, using default")
+        elif voice_audio_b64:
+            # Use uploaded audio
             try:
-                # Decode base64 audio and save to temp file
                 audio_bytes = base64.b64decode(voice_audio_b64)
                 temp_file = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
                 temp_file.write(audio_bytes)
                 temp_file.close()
                 audio_prompt_path = temp_file.name
-                logger.info(f"Using voice clone from uploaded audio")
+                logger.info("Using uploaded voice audio")
             except Exception as e:
                 logger.warning(f"Failed to process voice audio: {e}")
 
@@ -143,7 +195,7 @@ def generate():
             })
 
         finally:
-            # Clean up temp file
+            # Clean up temp file (only if we created one)
             if temp_file and os.path.exists(temp_file.name):
                 os.unlink(temp_file.name)
 
@@ -155,6 +207,13 @@ def generate():
 if __name__ == "__main__":
     # Load model before starting server
     load_model()
+
+    # Log available voices
+    voices = get_available_voices()
+    if voices:
+        logger.info(f"Available voice presets: {[v['id'] for v in voices]}")
+    else:
+        logger.info("No voice presets found in voices/ directory")
 
     # Run Flask server
     # Host 0.0.0.0 to be accessible via Tailscale
