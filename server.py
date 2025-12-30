@@ -64,21 +64,42 @@ def load_model():
 
 
 def get_available_voices():
-    """Get list of available voice presets from voices/ directory."""
+    """Get list of available voice presets from voices/ directory, including subdirectories."""
     voices = []
-    if VOICES_DIR.exists():
-        for f in VOICES_DIR.iterdir():
-            if f.suffix.lower() in [".wav", ".mp3", ".flac", ".ogg"]:
+    if not VOICES_DIR.exists():
+        return voices
+
+    audio_extensions = [".wav", ".mp3", ".flac", ".ogg"]
+
+    def scan_directory(directory, category=None):
+        for item in directory.iterdir():
+            if item.is_dir():
+                # Recurse into subdirectory, using folder name as category
+                category_name = item.name.replace("_", " ").title()
+                scan_directory(item, category_name)
+            elif item.suffix.lower() in audio_extensions:
+                # Get path relative to VOICES_DIR for the ID
+                rel_path = item.relative_to(VOICES_DIR)
+                voice_id = str(rel_path.with_suffix(""))  # e.g., "league/jinx"
+
                 voices.append({
-                    "id": f.stem,
-                    "name": f.stem.replace("_", " ").title(),
-                    "file": f.name
+                    "id": voice_id,
+                    "name": item.stem.replace("_", " ").title(),
+                    "category": category or "General",
+                    "file": item.name
                 })
-    return sorted(voices, key=lambda v: v["name"])
+
+    scan_directory(VOICES_DIR)
+
+    # Sort by category, then by name
+    return sorted(voices, key=lambda v: (v["category"], v["name"]))
 
 
 def get_voice_path(voice_id):
-    """Get the file path for a voice preset, or None if not found."""
+    """Get the file path for a voice preset, or None if not found.
+
+    voice_id can be a simple name like "jinx" or a path like "league/jinx".
+    """
     if not voice_id or not VOICES_DIR.exists():
         return None
 
