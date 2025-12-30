@@ -83,6 +83,27 @@ def get_voice_path(voice_id):
     return None
 
 
+def ensure_mono_audio(audio_path):
+    """
+    Ensure audio file is mono. If stereo, convert to mono and save to temp file.
+    Returns path to mono audio (original if already mono, temp file if converted).
+    """
+    waveform, sample_rate = ta.load(audio_path)
+
+    # Check if stereo (2 channels)
+    if waveform.shape[0] > 1:
+        logger.info(f"Converting {waveform.shape[0]}-channel audio to mono")
+        # Average channels to get mono
+        waveform = waveform.mean(dim=0, keepdim=True)
+
+        # Save to temp file
+        temp_file = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
+        ta.save(temp_file.name, waveform, sample_rate)
+        return temp_file.name, True  # Return path and flag indicating temp file
+
+    return audio_path, False  # Already mono, no temp file created
+
+
 @app.route("/health", methods=["GET"])
 def health():
     """Health check endpoint."""
@@ -143,13 +164,16 @@ def generate():
 
         # Determine voice source (preset takes precedence)
         audio_prompt_path = None
-        temp_file = None
+        temp_files_to_cleanup = []
 
         if voice_preset:
             # Use preset voice
             preset_path = get_voice_path(voice_preset)
             if preset_path:
-                audio_prompt_path = preset_path
+                # Ensure mono audio
+                audio_prompt_path, is_temp = ensure_mono_audio(preset_path)
+                if is_temp:
+                    temp_files_to_cleanup.append(audio_prompt_path)
                 logger.info(f"Using preset voice: {voice_preset}")
             else:
                 logger.warning(f"Preset voice '{voice_preset}' not found, using default")
@@ -157,10 +181,16 @@ def generate():
             # Use uploaded audio
             try:
                 audio_bytes = base64.b64decode(voice_audio_b64)
-                temp_file = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
-                temp_file.write(audio_bytes)
-                temp_file.close()
-                audio_prompt_path = temp_file.name
+                upload_temp = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
+                upload_temp.write(audio_bytes)
+                upload_temp.close()
+                temp_files_to_cleanup.append(upload_temp.name)
+
+                # Ensure mono audio
+                audio_prompt_path, is_temp = ensure_mono_audio(upload_temp.name)
+                if is_temp and audio_prompt_path != upload_temp.name:
+                    temp_files_to_cleanup.append(audio_prompt_path)
+
                 logger.info("Using uploaded voice audio")
             except Exception as e:
                 logger.warning(f"Failed to process voice audio: {e}")
@@ -195,9 +225,10 @@ def generate():
             })
 
         finally:
-            # Clean up temp file (only if we created one)
-            if temp_file and os.path.exists(temp_file.name):
-                os.unlink(temp_file.name)
+            # Clean up all temp files
+            for temp_path in temp_files_to_cleanup:
+                if os.path.exists(temp_path):
+                    os.unlink(temp_path)
 
     except Exception as e:
         logger.error(f"Generation failed: {e}")
