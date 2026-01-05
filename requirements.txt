@@ -1,5 +1,6 @@
 # TTS Server Dependencies
 flask>=3.0.0
+waitress>=3.0.0  # Production WSGI server (cross-platform: Windows/macOS/Linux)
 chatterbox-tts
 torch
 torchaudio

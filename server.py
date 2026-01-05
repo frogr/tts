@@ -12,6 +12,7 @@ import tempfile
 import logging
 from pathlib import Path
 from flask import Flask, request, jsonify
+from waitress import serve
 import torch
 import torchaudio as ta
 from chatterbox.tts import ChatterboxTTS
@@ -275,13 +276,14 @@ if __name__ == "__main__":
     load_model()
 
     # Log available voices
-    voices = get_available_voices()
-    if voices:
-        logger.info(f"Available voice presets: {[v['id'] for v in voices]}")
+    voices_list = get_available_voices()
+    if voices_list:
+        logger.info(f"Available voice presets: {[v['id'] for v in voices_list]}")
     else:
         logger.info("No voice presets found in voices/ directory")
 
-    # Run Flask server
+    # Run production server with Waitress
     # Host 0.0.0.0 to be accessible via Tailscale
     port = int(os.environ.get("TTS_PORT", 5000))
-    app.run(host="0.0.0.0", port=port, debug=False)
+    logger.info(f"Starting Waitress production server on http://0.0.0.0:{port}")
+    serve(app, host="0.0.0.0", port=port, threads=4)
